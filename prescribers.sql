@@ -70,7 +70,36 @@ GROUP BY 1
 ORDER BY 2 
 ;
 
--- d.
+-- d. 
+WITH opioid AS (
+	SELECT
+		p1.specialty_description AS specialty,
+		SUM(p2.total_claim_count) AS opioid_claims
+	 FROM prescriber p1
+	JOIN prescription p2 ON p1.npi = p2.npi
+	JOIN drug d ON p2.drug_name = d.drug_name
+	WHERE d.opioid_drug_flag = 'Y'
+	GROUP BY 1
+    ),
+	total AS (
+	SELECT
+		p1.specialty_description AS specialty,
+		SUM(p2.total_claim_count) AS total_claims
+	 FROM prescriber p1
+	JOIN prescription p2 ON p1.npi = p2.npi
+	JOIN drug d ON p2.drug_name = d.drug_name
+	GROUP BY 1
+	)
+SELECT
+	o.specialty,
+	t.total_claims,
+	o.opioid_claims,
+	ROUND((o.opioid_claims / t.total_claims) * 100, 2) AS percent_opioid
+FROM opioid o
+JOIN total t ON o.specialty = t.specialty
+ORDER BY 4 DESC
+;
+
 
 
 -- 3. a. Which drug (generic_name) had the highest total drug cost?
@@ -79,7 +108,7 @@ ORDER BY 2
 -- a.
 SELECT
 	d.generic_name,
-	SUM(p.total_drug_cost) AS total_cost
+	SUM(p.total_drug_cost)::money AS total_cost
 FROM prescription p
 LEFT JOIN drug d ON p.drug_name = d.drug_name
 GROUP BY 1
@@ -90,7 +119,7 @@ LIMIT 1
 -- b.
 SELECT
 	d.generic_name,
-	ROUND(SUM(p.total_drug_cost) / SUM(p.total_day_supply), 2) AS total_cost_per_day
+	ROUND(SUM(p.total_drug_cost) / SUM(p.total_day_supply), 2)::money AS total_cost_per_day
 FROM prescription p
 LEFT JOIN drug d ON p.drug_name = d.drug_name
 GROUP BY 1
@@ -229,15 +258,231 @@ ORDER BY 4 DESC
 --        c. Finally, if you have not done so already, fill in any missing values for total_claim_count with 0. Hint - Google the COALESCE function.
 
 -- a.
+SELECT
+	p1.npi,
+	p2.drug_name
+FROM prescriber p1
+JOIN prescription p2 ON p1.npi = p2.npi
+JOIN drug d ON p2.drug_name = d.drug_name
+WHERE p1.specialty_description = 'Pain Management'
+AND p1.nppes_provider_city = 'NASHVILLE'
+AND d.opioid_drug_flag = 'Y'
+;
+
+-- This one is answering the question. The above one only has drugs with prescriptions.
+SELECT
+	p.npi,
+	d.drug_name
+FROM prescriber p
+CROSS JOIN drug d
+WHERE d.opioid_drug_flag = 'Y'
+AND p.specialty_description = 'Pain Management'
+AND p.nppes_provider_city = 'NASHVILLE'
+
+-- b.
+
+-- This is the best answer so far - There are a lot more zeroes than I expected
+
+SELECT
+	DISTINCT p.npi,
+	d.drug_name,
+	COALESCE(SUM(p1.total_claim_count), 0) AS total_claims
+FROM prescriber p
+CROSS JOIN drug d
+LEFT JOIN prescription p1 ON d.drug_name = p1.drug_name AND p.npi = p1.npi
+WHERE d.opioid_drug_flag = 'Y'
+AND p.specialty_description = 'Pain Management'
+AND p.nppes_provider_city = 'NASHVILLE'
+GROUP BY 1,2
+ORDER BY 3 DESC
+;
 
 
 
+-- c.
 
 
+-- PART II
+
+-- 1. How many npi numbers appear in the prescriber table but not in the prescription table?
+
+SELECT
+	COUNT(p.npi)
+FROM prescriber p
+LEFT JOIN prescription ps ON p.npi = ps.npi
+WHERE ps.npi IS NULL
+;
+
+-- 2. a. Find the top five drugs (generic_name) prescribed by prescribers with the specialty of Family Practice.
+--    b. Find the top five drugs (generic_name) prescribed by prescribers with the specialty of Cardiology.
+--    c. Which drugs appear in the top five prescribed for both Family Practice prescribers and Cardiologists? 
+--       Combine what you did for parts a and b into a single query to answer this question.
+
+-- a.
+SELECT
+	d.generic_name,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+JOIN drug d ON ps.drug_name = d.drug_name
+WHERE p.specialty_description = 'Family Practice'
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 5
+;
+
+-- b. 
+SELECT
+	d.generic_name,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+JOIN drug d ON ps.drug_name = d.drug_name
+WHERE p.specialty_description = 'Cardiology'
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 5
+;
+
+-- c.
+(SELECT
+	'Family Medicine' AS specialty,
+	d.generic_name,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+JOIN drug d ON ps.drug_name = d.drug_name
+WHERE p.specialty_description = 'Family Practice'
+GROUP BY 1,2
+ORDER BY 3 DESC
+LIMIT 5)
+
+UNION ALL
+
+(SELECT
+	'Cardiology' AS specialty,
+	d.generic_name,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+JOIN drug d ON ps.drug_name = d.drug_name
+WHERE p.specialty_description = 'Cardiology'
+GROUP BY 1,2
+ORDER BY 3 DESC
+LIMIT 5)
+
+--3. Your goal in this question is to generate a list of the top prescribers in each of the major metropolitan areas of Tennessee.
+--  a. First, write a query that finds the top 5 prescribers in Nashville in terms of the total number of claims (total_claim_count) across all drugs. 
+--     Report the npi, the total number of claims, and include a column showing the city.
+--  b. Now, report the same for Memphis.
+--  c. Combine your results from a and b, along with the results for Knoxville and Chattanooga.
+
+-- a.
+SELECT
+	'Nashville' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'NASHVILLE'
+GROUP BY 1,2
+ORDER BY 3 DESC
+;
+
+-- b.
+SELECT
+	'Memphis' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'MEMPHIS'
+GROUP BY 1,2
+ORDER BY 3 DESC
+;
+
+-- c. 
+(SELECT
+	'Nashville' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'NASHVILLE'
+GROUP BY 1,2
+ORDER BY 3 DESC)
+
+UNION ALL
+
+(SELECT
+	'Memphis' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'MEMPHIS'
+GROUP BY 1,2
+ORDER BY 3 DESC
+)
+
+UNION ALL
+
+(SELECT
+	'Knoxville' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'KNOXVILLE'
+GROUP BY 1,2
+ORDER BY 3 DESC
+)
+
+UNION ALL
+
+(SELECT
+	'Chattanooga' AS provider_city,
+	p.npi,
+	SUM(ps.total_claim_count) AS total_claims
+FROM prescriber p
+JOIN prescription ps ON p.npi = ps.npi
+WHERE p.nppes_provider_city = 'CHATTANOOGA'
+GROUP BY 1,2
+ORDER BY 3 DESC
+)
 
 
+-- 4. Find all counties which had an above-average (for the state) number of overdose deaths in 2017. Report the county name and number of overdose deaths.
+
+SELECT
+	f.county,
+	od.overdose_deaths
+FROM fips_county f
+JOIN overdose_deaths od ON f.fipscounty = od.fipscounty
+WHERE od.year = 2017
+AND od.overdose_deaths > (SELECT AVG(overdose_deaths) FROM overdose_deaths WHERE year = 2017)
+ORDER BY 2 DESC
+;
 
 
+-- 5. a. Write a query that finds the total population of Tennessee.
+--    b. Build off of the query that you wrote in part a to write a query that returns for each county that county's name, its population, and the percentage of the total population
+--       of Tennessee that is contained in that county.
+
+-- a.
+SELECT 
+	SUM(population) AS total_population
+FROM population
+
+-- b.
+SELECT
+	f.county,
+	p.population,
+	ROUND((p.population / (SELECT SUM(population) FROM population)) * 100, 2) AS pct_total_population
+FROM fips_county f
+JOIN population p ON f.fipscounty = p.fipscounty
+ORDER BY 3 DESC
+;
 
 
 
